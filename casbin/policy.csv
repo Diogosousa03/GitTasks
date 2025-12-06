@@ -1,0 +1,3 @@
+p, free, repo:milestones, read
+p, regular, milestone:task_create, create_default_list
+p, premium, milestone:task_create, create_custom_list
