@@ -1,22 +1,44 @@
 
+require('dotenv').config();
 
-const express = require('express')
+const express = require('express');
 const cookieParser = require('cookie-parser');
 const axios = require('axios');
 const FormData = require('form-data');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const { pdp, pep } = require('./index.js');
+
 
 const PORT = 3001
 
 // system variables where Client credentials are stored
-const CLIENT_ID = process.env.CLIENT_ID
-const CLIENT_SECRET = process.env.CLIENT_SECRET
+const CLIENT_ID = process.env.GOOGLE_CLIENT_ID
+const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET
 // callback URL configured during Client registration in OIDC provider
 const CALLBACK = 'callback'
+console.log("CLIENT_ID:", CLIENT_ID);
+console.log("CLIENT_SECRET:", CLIENT_SECRET);
 
 
 const app = express()
 app.use(cookieParser())
+const sessions = {};
+const HARDCODED_REPO = {
+    owner: "nodejs",
+    repo: "node"
+};
+
+
+function createSession(payload, tokens) {
+  const sessionID = crypto.randomBytes(30).toString('hex');
+  sessions[sessionID] = {
+    email: payload.email,
+    role: 'free', // default role; can be changed later (e.g., admin UI or policy)
+    tokens: tokens || {},
+  };
+  return sessionID;
+}
 
 app.get('/', (req, resp) => {
     resp.send('<a href=/login>Use Google Account</a>')
@@ -63,7 +85,6 @@ app.get('/'+CALLBACK, (req, resp) => {
     form.append('client_secret', CLIENT_SECRET);
     form.append('redirect_uri', 'http://localhost:'+PORT+'/'+CALLBACK);
     form.append('grant_type', 'authorization_code');
-    //console.log(form);
 
     axios.post(
         // token endpoint
@@ -82,8 +103,18 @@ app.get('/'+CALLBACK, (req, resp) => {
         var jwt_payload = jwt.decode(response.data.id_token)
         console.log(jwt_payload)
 
+        const sessionID = createSession(jwt_payload, {
+            access_token: response.accessToken,
+            refresh_token: response.refreshToken,
+            id_token: response.idToken,
+            });
+
         // a simple cookie example
-        resp.cookie("SessionCookie", jwt_payload.email)
+        resp.cookie('sessionID', sessionID, {
+            httpOnly: true,
+            secure: false,
+            sameSite: 'lax'
+        });
         // HTML response with the code and access token received from the authorization server
         resp.send(
             '<div> callback with code = <code>' + req.query.code + '</code></div><br>' +
@@ -98,6 +129,46 @@ app.get('/'+CALLBACK, (req, resp) => {
         resp.send()
       });
 })
+
+
+app.get("/milestones", async (req, res) => {
+  const sessionID = req.cookies.sessionID;
+  const session = sessions[sessionID];
+
+  if (!session)
+    return res.status(401).send("Not authenticated");
+
+  const { owner, repo } = HARDCODED_REPO;
+
+  // Casbin check
+  const decision = await pdp(session.role, "repo:milestones", "read");
+  pep(decision);
+
+  if (!decision.res)
+    return res.status(403).send("Forbidden");
+
+  try {
+    const response = await axios.get(
+      `https://api.github.com/repos/${owner}/${repo}/milestones`,
+      {
+        headers: {
+          //Authorization: `Bearer ${session.tokens.github}`, // se for privado
+          Accept: "application/vnd.github+json",
+        },
+      }
+    );
+
+    res.json(response.data);
+
+  } catch (err) {
+    console.log(err);
+    res.status(500).send("Erro ao buscar milestones");
+  }
+});
+
+
+
+
 
 app.listen(PORT, (err) => {
     if (err) {
