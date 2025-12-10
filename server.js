@@ -84,7 +84,7 @@ app.get("/login", (req, res) => {
 });
 
 // ------------------------------------------------------
-// GOOGLE CALLBACK (corrigido)
+// GOOGLE CALLBACK
 // ------------------------------------------------------
 app.get("/callback", (req, res) => {
     const form = new FormData();
@@ -101,7 +101,6 @@ app.get("/callback", (req, res) => {
         const payload = jwt.decode(response.data.id_token);
         const access = response.data.access_token;
 
-        // 1️⃣ OBTER LISTAS DO GOOGLE TASKS
         const lists = await axios.get(
             "https://tasks.googleapis.com/tasks/v1/users/@me/lists",
             {
@@ -114,7 +113,6 @@ app.get("/callback", (req, res) => {
         if (lists.data.items?.length > 0) {
             listId = lists.data.items[0].id;
         } else {
-            // 2️⃣ CRIAR LISTA SE NÃO EXISTIR NENHUMA
             const newList = await axios.post(
                 "https://tasks.googleapis.com/tasks/v1/users/@me/lists",
                 { title: "My Tasks" },
@@ -122,8 +120,6 @@ app.get("/callback", (req, res) => {
             );
             listId = newList.data.id;
         }
-
-        // 3️⃣ GUARDAR SESSION COM TASKLIST
         const sessionID = createSession(payload, {
             access_token: access,
             id_token: response.data.id_token,
@@ -236,9 +232,6 @@ app.get("/milestones/github", async (req, res) => {
 });
 
 // ------------------------------------------------------
-// CREATE GOOGLE TASK (corrigido)
-// ------------------------------------------------------
-// ------------------------------------------------------
 // CREATE GOOGLE TASK (regular + premium)
 // ------------------------------------------------------
 app.get("/milestone/create-task/:id", async (req, res) => {
@@ -251,8 +244,6 @@ app.get("/milestone/create-task/:id", async (req, res) => {
     // --- Casbin check ---
     const decision = await pdp(session.role, "milestone:task_create", "create_custom_list");
     pep(decision);
-
-    // free users cannot create tasks
     if (!decision.res) {
         return res.status(403).send("Forbidden — your role cannot create tasks");
     }
@@ -261,7 +252,6 @@ app.get("/milestone/create-task/:id", async (req, res) => {
     const { owner, repo } = HARDCODED_REPO;
 
     try {
-        // ✅ 1. Fetch milestone
         const milestone = await axios.get(
             `https://api.github.com/repos/${owner}/${repo}/milestones/${milestoneId}`,
             {
@@ -274,13 +264,12 @@ app.get("/milestone/create-task/:id", async (req, res) => {
 
         const title = milestone.data.title;
 
-        let listId = session.tasklist; // default list
+        let listId = session.tasklist;
 
         // ----------------------------------------------------------
-        // ✅ PREMIUM users → create custom list using milestone name
+        // PREMIUM users → create custom list using milestone name
         // ----------------------------------------------------------
         if (session.role === "premium") {
-            // Casbin check for premium list creation
             const decPremium = await pdp(session.role, "milestone:task_create", "create_custom_list");
             pep(decPremium);
 
@@ -288,7 +277,6 @@ app.get("/milestone/create-task/:id", async (req, res) => {
                 return res.status(403).send("Forbidden — premium cannot create custom lists (policy mismatch)");
             }
 
-            // Create custom list
             const newList = await axios.post(
                 "https://tasks.googleapis.com/tasks/v1/users/@me/lists",
                 { title: title },
@@ -300,11 +288,11 @@ app.get("/milestone/create-task/:id", async (req, res) => {
                 }
             );
 
-            listId = newList.data.id; // ✅ use the new list
+            listId = newList.data.id;
         }
 
         // ----------------------------------------------------------
-        // ✅ Create the task inside listId (default or premium list)
+        // Create the task inside listId (default or premium list)
         // ----------------------------------------------------------
         await axios.post(
             `https://tasks.googleapis.com/tasks/v1/lists/${listId}/tasks`,
@@ -318,7 +306,7 @@ app.get("/milestone/create-task/:id", async (req, res) => {
         );
 
         res.send(`
-            <h3>✅ Task Created!</h3>
+            <h3> Task Created!</h3>
             <p>Milestone: <b>${title}</b></p>
             <p>List ID: <b>${listId}</b></p>
             <a href="/milestones/github">Back</a>
